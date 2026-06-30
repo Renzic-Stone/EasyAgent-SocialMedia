@@ -87,18 +87,20 @@ Agent 请按以下流程执行：
 
 ### Agent 安装流程
 
-```
+```plaintext
 1. 读取本 README，理解项目结构
 2. 询问用户：需要配置哪些平台？（如 B站、X、小红书、Reddit）
 3. 根据用户选择的平台，按以下规则操作：
    - [A 类] 零配置，直接注册即可使用
-   - [B 类] 先 npm install -g @jackwener/opencli（OpenCLI ），再注册
+   - [B 类] 先 npm install -g @jackwener/opencli（OpenCLI），再注册
 4. 全部注册完成后，调每个 MCP 的 doctor() 确认状态
-5. 告知用户：
-   ✅ B站等 A 类平台已就绪
-   ⚠️ B 类平台需要用户装 Chrome 扩展 + 登录对应网站
-   （提供 Chrome 扩展链接：https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk）
-```
+5. 告知用户需装 Chrome 扩展，**必须提供可以直接点击的完整超链接**：
+   https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk
+6. 用户装完扩展、登录对应网站后，调 doctor() 逐一校验
+7. 列出校验结果：
+   ✅ 已登录的平台（可直接使用）
+   ❌ 未登录的平台（每个给出根域名可点击链接，方便用户点开登录）
+   ```
 
 > **Agent 要点：** OpenCLI 的安装（`npm install -g @jackwener/opencli`）由你自动执行，不需要用户动手。
 > 用户只需要做两件事：装 Chrome 扩展 + 登录网站。等用户说"装好了"时，调 doctor() 确认可用性。
@@ -115,15 +117,21 @@ hermes mcp add reddit-mcp --command python --args {项目路径}/servers/reddit_
 
 ### 用户看到的体验
 
-```
+```plaintext
 你: "帮我配置 EasyAgent-SocialMedia，项目在 ~/EasyAgent-SocialMedia"
 Agent: "好的，你需要哪些平台？B站、X、小红书、Reddit？"
 你: "B站和 X 吧"
 Agent: "B站已就绪。正在安装 OpenCLI... 装好了。
-       请装 Chrome 扩展：链接
-       然后在 Chrome 里登录 x.com，登录完告诉我。"
+       请装 Chrome 扩展（点击链接安装）：
+       https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk
+       然后在 Chrome 里登录对应网站，登录完告诉我。"
 你: "装好了"
-Agent: 调 doctor() ✅ → "全部配置完成，现在可以用了。"
+Agent: 调 doctor() → "已就绪情况如下：
+       ✅ B站 —— 零配置，直接可用
+       ✅ X —— 已登录，可直接搜索
+       ❌ 小红书 —— 未配置，如果需要请告诉我
+       链接快速直达：https://x.com"
+你: "好，够了"
 ```
 
 ## 模板结构
