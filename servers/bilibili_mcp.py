@@ -115,8 +115,13 @@ def bilibili_hot(count: int = 10) -> list:
 
 def _no_backend_hint() -> str:
     """所有后端不可用时，指引模型用搜索引擎兜底"""
+    opencli_ok = _check_opencli()
+    if opencli_ok:
+        cause = f"{PLATFORM_DESC} 公开 API 暂时不可用，但你已安装 OpenCLI。可以尝试装 Chrome 扩展并登录后使用。"
+    else:
+        cause = f"{PLATFORM_DESC} 公开 API 暂时不可用（可能被限流或网络异常）"
     return (
-        f"{PLATFORM_DESC} 公开 API 暂时不可用（可能被限流或网络异常）。\n"
+        f"{cause}。\n"
         f"\n"
         f"用你自己的搜索工具搜索 site:{SEARCH_DOMAIN} '关键词' 获取内容，\n"
         f"将结果正常输出给用户即可。\n"

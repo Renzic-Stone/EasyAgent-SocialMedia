@@ -102,7 +102,11 @@ def doctor() -> dict:
 def _no_backend_hint() -> str:
     """所有后端不可用时，指引模型用搜索引擎兜底（原则⑤⑥）"""
     if CLASS == "A":
-        cause = f"{PLATFORM_DESC} 公开 API 暂时不可用（可能被限流或网络异常）"
+        opencli_ok = _check_opencli()
+        if opencli_ok:
+            cause = f"{PLATFORM_DESC} 公开 API 暂时不可用，但你已安装 OpenCLI。可以尝试装 Chrome 扩展并登录后使用。"
+        else:
+            cause = f"{PLATFORM_DESC} 公开 API 暂时不可用（可能被限流或网络异常）"
     else:
         opencli_ok = _check_opencli()
         if opencli_ok:
