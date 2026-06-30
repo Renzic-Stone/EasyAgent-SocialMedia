@@ -99,20 +99,21 @@ def doctor() -> dict:
 # 搜索引擎兜底指引（B 类必加，A 类可删）
 # ══════════════════════════════════════════════════════
 
-def _no_backend_hint() -> str:
-    """所有后端不可用时，指引模型用搜索引擎兜底（原则⑤⑥）"""
-    if CLASS == "A":
-        opencli_ok = _check_opencli()
-        if opencli_ok:
-            cause = f"{PLATFORM_DESC} 公开 API 暂时不可用，但你已安装 OpenCLI。可以尝试装 Chrome 扩展并登录后使用。"
-        else:
-            cause = f"{PLATFORM_DESC} 公开 API 暂时不可用（可能被限流或网络异常）"
+def _no_backend_hint(reason: str = "no_backend") -> str:
+    """所有后端不可用时，指引模型用搜索引擎兜底（原则⑤⑥）
+    reason: "no_backend"=无可用后端, "cookie"=装了但Cookie过期
+    """
+    if reason == "cookie":
+        cause = f"{PLATFORM_DESC} 登录状态已过期或被拦截"
     else:
-        opencli_ok = _check_opencli()
-        if opencli_ok:
-            cause = f"{PLATFORM_DESC} 登录 Cookie 已过期或被拦截"
+        if CLASS == "A":
+            cause = f"{PLATFORM_DESC} 公开 API 暂时不可用（可能被限流或网络异常）"
         else:
-            cause = f"OpenCLI 连接异常，{PLATFORM_DESC} 无法读取"
+            opencli_ok = _check_opencli()
+            if opencli_ok:
+                cause = f"{PLATFORM_DESC} 登录 Cookie 已过期或被拦截"
+            else:
+                cause = f"OpenCLI 连接异常，{PLATFORM_DESC} 无法读取"
     return (
         f"{cause}。\n"
         f"\n"

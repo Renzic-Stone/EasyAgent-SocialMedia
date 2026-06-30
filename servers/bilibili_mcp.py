@@ -53,78 +53,123 @@ def _bili_api(path: str, params: dict = None) -> dict:
         return {"code": -1, "error": str(e)}
 
 
-def bilibili_search(query: str, page: int = 1, count: int = 5) -> list:
-    """搜索B站视频"""
+def bilibili_search(query: str, page: int = 1, count: int = 5) -> list | dict:
+    """搜索B站视频。API → OpenCLI 自动降级"""
+    # 1. 先试 API
     data = _bili_api("search/all/v2", {"keyword": query, "page": page})
-    if data.get("code") != 0:
-        return [{"error": _no_backend_hint()}]
-    videos = []
-    for section in data.get("data", {}).get("sections", []):
-        for item in section.get("items", []):
-            if item.get("type") == "video":
-                videos.append({
-                    "title": item.get("title", ""),
-                    "bvid": item.get("bvid", ""),
-                    "author": item.get("author", ""),
-                    "play": item.get("play", 0),
-                    "danmaku": item.get("video_review", 0),
-                    "duration": item.get("duration", ""),
-                    "pic": item.get("pic", ""),
-                })
-    return videos[:count]
+    if data.get("code") == 0:
+        videos = []
+        for section in data.get("data", {}).get("sections", []):
+            for item in section.get("items", []):
+                if item.get("type") == "video":
+                    videos.append({
+                        "title": item.get("title", ""),
+                        "bvid": item.get("bvid", ""),
+                        "author": item.get("author", ""),
+                        "play": item.get("play", 0),
+                        "danmaku": item.get("video_review", 0),
+                        "duration": item.get("duration", ""),
+                        "pic": item.get("pic", ""),
+                    })
+        return videos[:count]
+
+    # 2. API 失败 → 自动试 OpenCLI（不经过模型）
+    if _check_opencli():
+        try:
+            r = subprocess.run(
+                [OPENCLI_CMD, "bilibili", "search", query, "--limit", str(count), "-f", "json"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if r.returncode == 0:
+                return json.loads(r.stdout)
+            # OpenCLI 报错 → 等同 B 类报错
+            return {"error": _no_backend_hint("cookie")}
+        except Exception:
+            return {"error": _no_backend_hint("cookie")}
+
+    # 3. 都没装 → 搜索引擎兜底
+    return [{"error": _no_backend_hint()}]
 
 
 def bilibili_video(bvid: str) -> dict:
-    """获取视频详情（标题、描述、播放数据）"""
+    """获取视频详情。API → OpenCLI 自动降级"""
     data = _bili_api("view", {"bvid": bvid})
-    if data.get("code") != 0:
-        return {"error": _no_backend_hint()}
-    v = data.get("data", {})
-    stat = v.get("stat", {})
-    return {
-        "title": v.get("title", ""),
-        "desc": v.get("desc", "")[:500],
-        "author": v.get("owner", {}).get("name", ""),
-        "views": stat.get("view", 0),
-        "likes": stat.get("like", 0),
-        "coins": stat.get("coin", 0),
-        "favorites": stat.get("favorite", 0),
-        "danmaku": stat.get("danmaku", 0),
-        "duration": v.get("duration", 0),
-        "pic": v.get("pic", ""),
-        "tags": [t.get("tag_name", "") for t in v.get("tags", [])],
-    }
-
-
-def bilibili_hot(count: int = 10) -> list:
-    """获取B站热门视频"""
-    data = _bili_api("popular")
-    if data.get("code") != 0:
-        return [{"error": _no_backend_hint()}]
-    videos = []
-    for v in data.get("data", {}).get("list", []):
-        videos.append({
+    if data.get("code") == 0:
+        v = data.get("data", {})
+        stat = v.get("stat", {})
+        return {
             "title": v.get("title", ""),
-            "bvid": v.get("bvid", ""),
+            "desc": v.get("desc", "")[:500],
             "author": v.get("owner", {}).get("name", ""),
-            "views": v.get("stat", {}).get("view", 0),
-            "duration": v.get("duration", ""),
-        })
-    return videos[:count]
+            "views": stat.get("view", 0),
+            "likes": stat.get("like", 0),
+            "coins": stat.get("coin", 0),
+            "favorites": stat.get("favorite", 0),
+            "danmaku": stat.get("danmaku", 0),
+            "duration": v.get("duration", 0),
+            "pic": v.get("pic", ""),
+            "tags": [t.get("tag_name", "") for t in v.get("tags", [])],
+        }
+
+    if _check_opencli():
+        try:
+            r = subprocess.run(
+                [OPENCLI_CMD, "bilibili", "video", bvid, "-f", "json"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if r.returncode == 0:
+                return json.loads(r.stdout)
+            return {"error": _no_backend_hint("cookie")}
+        except Exception:
+            return {"error": _no_backend_hint("cookie")}
+
+    return {"error": _no_backend_hint()}
 
 
-def _no_backend_hint() -> str:
-    """所有后端不可用时，指引模型用搜索引擎兜底"""
-    opencli_ok = _check_opencli()
-    if opencli_ok:
-        cause = f"{PLATFORM_DESC} 公开 API 暂时不可用，但你已安装 OpenCLI。可以尝试装 Chrome 扩展并登录后使用。"
+def bilibili_hot(count: int = 10) -> list | dict:
+    """获取B站热门视频。API → OpenCLI 自动降级"""
+    data = _bili_api("popular")
+    if data.get("code") == 0:
+        videos = []
+        for v in data.get("data", {}).get("list", []):
+            videos.append({
+                "title": v.get("title", ""),
+                "bvid": v.get("bvid", ""),
+                "author": v.get("owner", {}).get("name", ""),
+                "views": v.get("stat", {}).get("view", 0),
+                "duration": v.get("duration", ""),
+            })
+        return videos[:count]
+
+    if _check_opencli():
+        try:
+            r = subprocess.run(
+                [OPENCLI_CMD, "bilibili", "hot", "--limit", str(count), "-f", "json"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if r.returncode == 0:
+                return json.loads(r.stdout)
+            return {"error": _no_backend_hint("cookie")}
+        except Exception:
+            return {"error": _no_backend_hint("cookie")}
+
+    return [{"error": _no_backend_hint()}]
+
+
+def _no_backend_hint(reason: str = "no_backend") -> str:
+    """所有后端不可用时，指引模型用搜索引擎兜底
+    reason: "no_backend"=没装OpenCLI, "cookie"=装了但Cookie过期
+    """
+    if reason == "cookie":
+        cause = f"{PLATFORM_DESC} 登录状态已过期或被拦截"
     else:
         cause = f"{PLATFORM_DESC} 公开 API 暂时不可用（可能被限流或网络异常）"
+    need_login_msg = "。可以在末尾告知用户该平台登录状态需要更新。" if reason == "cookie" else "。可以在末尾告知用户安装 OpenCLI 可作为备选方案。"
     return (
         f"{cause}。\n"
         f"\n"
         f"用你自己的搜索工具搜索 site:{SEARCH_DOMAIN} '关键词' 获取内容，\n"
-        f"将结果正常输出给用户即可。\n"
+        f"将结果正常输出给用户即可{need_login_msg}\n"
         f"\n"
         f"注意：不要尝试自行修复（重试命令、修改参数、换工具等），\n"
         f"自行修复通常无效且浪费大量时间和上下文资源。\n"
