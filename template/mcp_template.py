@@ -128,19 +128,42 @@ def _no_backend_hint(reason: str = "no_backend") -> str:
 
 
 # ══════════════════════════════════════════════════════
-# 业务函数
+# 业务函数（展示 A/B 两类模式）
 # ══════════════════════════════════════════════════════
 #
-# Class A 模式：直接调公开 API
-#   def search(query, count=5) -> list:
-#       ...
+# Class A 模式：API → 自动降级 OpenCLI → 搜索引擎兜底
 #
-# Class B 模式：调 OpenCLI → 失败返回 _no_backend_hint()
+#   def search(query, count=5) -> list | dict:
+#       # 1. 先试 API
+#       data = _call_api("/search", {"q": query})
+#       if data.get("code") == 0:
+#           return extract_results(data)
+#
+#       # 2. API 失败 → 自动试 OpenCLI（不经过模型）
+#       if _check_opencli():
+#           try:
+#               r = subprocess.run([OPENCLI_CMD, "platform", "search", ...])
+#               if r.returncode == 0:
+#                   return json.loads(r.stdout)
+#               return {"error": _no_backend_hint("cookie")}
+#           except Exception:
+#               return {"error": _no_backend_hint("cookie")}
+#
+#       # 3. 都没装 → 搜索引擎兜底
+#       return {"error": _no_backend_hint()}
+#
+# Class B 模式：OpenCLI → 失败返回 _no_backend_hint()
+#
 #   def search(query, count=5) -> dict:
 #       active = _detect_active_backend()
 #       if active == "opencli":
-#           try: ...
-#           except: ...
+#           try:
+#               r = subprocess.run([OPENCLI_CMD, ...])
+#               if r.returncode == 0:
+#                   return json.loads(r.stdout)
+#               return {"error": _no_backend_hint("cookie")}
+#           except Exception:
+#               return {"error": _no_backend_hint("cookie")}
 #       return {"error": _no_backend_hint()}
 #
 
