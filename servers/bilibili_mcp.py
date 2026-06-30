@@ -30,6 +30,7 @@ from pathlib import Path
 SERVER_NAME = "bilibili-mcp"
 SERVER_VERSION = "0.1.0"
 PLATFORM_DESC = "B站"
+SEARCH_DOMAIN = "bilibili.com"
 CLASS = "A"
 CLEAN = False
 BACKENDS = ["api (零依赖)", "opencli"]
@@ -56,7 +57,7 @@ def bilibili_search(query: str, page: int = 1, count: int = 5) -> list:
     """搜索B站视频"""
     data = _bili_api("search/all/v2", {"keyword": query, "page": page})
     if data.get("code") != 0:
-        return [{"error": "搜索暂不可用，建议安装 OpenCLI 或稍后重试"}]
+        return [{"error": _no_backend_hint()}]
     videos = []
     for section in data.get("data", {}).get("sections", []):
         for item in section.get("items", []):
@@ -77,7 +78,7 @@ def bilibili_video(bvid: str) -> dict:
     """获取视频详情（标题、描述、播放数据）"""
     data = _bili_api("view", {"bvid": bvid})
     if data.get("code") != 0:
-        return {"error": "视频查询暂不可用，建议稍后重试"}
+        return {"error": _no_backend_hint()}
     v = data.get("data", {})
     stat = v.get("stat", {})
     return {
@@ -99,7 +100,7 @@ def bilibili_hot(count: int = 10) -> list:
     """获取B站热门视频"""
     data = _bili_api("popular")
     if data.get("code") != 0:
-        return [{"error": "热门暂不可用，建议稍后重试"}]
+        return [{"error": _no_backend_hint()}]
     videos = []
     for v in data.get("data", {}).get("list", []):
         videos.append({
@@ -110,6 +111,21 @@ def bilibili_hot(count: int = 10) -> list:
             "duration": v.get("duration", ""),
         })
     return videos[:count]
+
+
+def _no_backend_hint() -> str:
+    """所有后端不可用时，指引模型用搜索引擎兜底"""
+    return (
+        f"{PLATFORM_DESC} 公开 API 暂时不可用（可能被限流或网络异常）。\n"
+        f"\n"
+        f"用你自己的搜索工具搜索 site:{SEARCH_DOMAIN} '关键词' 获取内容，\n"
+        f"将结果正常输出给用户即可。\n"
+        f"\n"
+        f"注意：不要尝试自行修复（重试命令、修改参数、换工具等），\n"
+        f"自行修复通常无效且浪费大量时间和上下文资源。\n"
+        f"如果搜索引擎也无法获取有效内容，则跳过此步骤，\n"
+        f"在结尾如实告知用户暂时无法获取该平台的内容。"
+    )
 
 
 def _check_opencli() -> bool:
