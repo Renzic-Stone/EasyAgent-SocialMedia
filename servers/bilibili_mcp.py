@@ -5,8 +5,7 @@ Zero external dependencies (stdlib only).
 
 Backends (detected at runtime, first wins):
   1. B站公开 API  (zero-dependency, always available)
-  2. bili-cli     (pip install bilibili-cli, richer data)
-  3. OpenCLI      (Chrome extension, subtitles)
+  2. OpenCLI      (Chrome extension, subtitles)
 
 Usage:
   chmod +x bilibili_mcp.py
@@ -33,7 +32,7 @@ SERVER_VERSION = "0.1.0"
 PLATFORM_DESC = "B站"
 CLASS = "A"
 CLEAN = False
-BACKENDS = ["api (零依赖)", "bili-cli", "opencli"]
+BACKENDS = ["api (零依赖)", "opencli"]
 
 
 BILIBILI_API = "https://api.bilibili.com/x/web-interface"
@@ -56,6 +55,8 @@ def _bili_api(path: str, params: dict = None) -> dict:
 def bilibili_search(query: str, page: int = 1, count: int = 5) -> list:
     """搜索B站视频"""
     data = _bili_api("search/all/v2", {"keyword": query, "page": page})
+    if data.get("code") != 0:
+        return [{"error": "搜索暂不可用，建议安装 OpenCLI 或稍后重试"}]
     videos = []
     for section in data.get("data", {}).get("sections", []):
         for item in section.get("items", []):
@@ -75,6 +76,8 @@ def bilibili_search(query: str, page: int = 1, count: int = 5) -> list:
 def bilibili_video(bvid: str) -> dict:
     """获取视频详情（标题、描述、播放数据）"""
     data = _bili_api("view", {"bvid": bvid})
+    if data.get("code") != 0:
+        return {"error": "视频查询暂不可用，建议稍后重试"}
     v = data.get("data", {})
     stat = v.get("stat", {})
     return {
@@ -95,6 +98,8 @@ def bilibili_video(bvid: str) -> dict:
 def bilibili_hot(count: int = 10) -> list:
     """获取B站热门视频"""
     data = _bili_api("popular")
+    if data.get("code") != 0:
+        return [{"error": "热门暂不可用，建议稍后重试"}]
     videos = []
     for v in data.get("data", {}).get("list", []):
         videos.append({
@@ -105,17 +110,6 @@ def bilibili_hot(count: int = 10) -> list:
             "duration": v.get("duration", ""),
         })
     return videos[:count]
-
-
-def _check_bili_cli() -> bool:
-    """检测 bili-cli 是否可用"""
-    try:
-        r = subprocess.run(["bili", "--version"], capture_output=True, text=True, timeout=5)
-        return r.returncode == 0
-    except FileNotFoundError:
-        return False
-    except Exception:
-        return False
 
 
 def _check_opencli() -> bool:
@@ -137,7 +131,6 @@ def doctor() -> dict:
         backends["api (零依赖)"] = _bili_api("popular", {"ps": 1})["code"] == 0
     except Exception:
         backends["api (零依赖)"] = False
-    backends["bili-cli"] = _check_bili_cli()
     backends["opencli"] = _check_opencli()
     active = None
     for name, ok in backends.items():

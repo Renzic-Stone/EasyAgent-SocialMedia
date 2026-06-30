@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-MCP Server 模板 — 四象限
+EasyAgent MCP Server 模板
 =========================
 
-                    数据干净（透传即可）    需数据清洗（提取/去冗余）
-                    ─────────────────────   ────────────────────────
-零配置（公开 API）    A-1: B站               A-2: 知乎等
-需登录（Cookie/CLI）  B-1: X, Reddit         B-2: 小红书
+后端架构（EasyAgent v2）：
+  Class A (零配置):  公开API → OpenCLI
+  Class B (需登录):  OpenCLI → Jina Reader
 
-选择依据：
-  - 登录？→ 平台是否需要 Cookie / 浏览器登录态 → A/B
-  - 清洗？→ 原始 API 返回是否嵌套深、空字段多 → 1/2
+原则：不维护平台独立 CLI（twitter-cli / rdt-cli / xhs-cli 等）。
+      OpenCLI 统一接管所有登录态平台的读写。
+      搜索失败时由错误消息指引模型用搜索引擎兜底。
 
-添加新平台：复制本文件 → 改元信息 → 删/留对应节 → 实现业务函数
+添加新平台：复制本文件 → 改元信息 → 实现业务函数 → 填检测函数
 """
 
 import json
@@ -26,79 +25,44 @@ from pathlib import Path
 # 元信息
 # ══════════════════════════════════════════════════════
 
-SERVER_NAME = "platform-mcp"       # 唯一标识，如 "zhihu-mcp"
+SERVER_NAME = "platform-mcp"
 SERVER_VERSION = "0.1.0"
-PLATFORM_DESC = "平台中文名"        # 如 "B站"、"X/Twitter"
-CLASS = "A"                        # A=零配置  B=需登录
-CLEAN = False                      # True=需数据清洗  False=透传
+PLATFORM_DESC = "平台中文名"
+CLASS = "B"        # A=零配置  B=需登录
+CLEAN = False      # True=需数据清洗
 
-# 后端路由（顺序=优先级，doctor 按序探测）
-BACKENDS = ["首选", "备选", "兜底"]
+BACKENDS = ["opencli"] if CLASS == "B" else ["公开API", "opencli"]
 
-# HTTP 请求头（公开 API / Jina Reader 等用到）
+# ── Windows 兼容 ──
+OPENCLI_CMD = "opencli.cmd" if sys.platform == "win32" else "opencli"
+
+# ── 搜索引擎兜底域名（B 类必填，A 类不需要）──
+SEARCH_DOMAIN = "example.com"
+
+# ── HTTP 请求头 ──
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 
 # ══════════════════════════════════════════════════════
-# Class B 特有：配置管理（A系列可整节删除）
+# 后端检测
 # ══════════════════════════════════════════════════════
 
-# CONFIG_PATH = Path.home() / ".agent-reach" / "config.yaml"
-# def _load_config() -> dict:
-#     """读取 Cookie/Token，YAML → 环境变量兜底"""
-#     ...
+def _check_opencli() -> bool:
+    """检测 OpenCLI daemon + 扩展是否连接"""
+    try:
+        r = subprocess.run(
+            [OPENCLI_CMD, "daemon", "status"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return "connected" in r.stdout.lower()
+    except:
+        return False
 
 
-# ══════════════════════════════════════════════════════
-# Quadrant 2 特有：数据清洗（CLEAN=False 可整节删除）
-# ══════════════════════════════════════════════════════
-
-# def _clean_item(raw: dict) -> dict:
-#     """从嵌套的原始 API 响应中提取有用字段，丢弃内部ID/空字段/冗余"""
-#     return {
-#         "id": raw.get("id", ""),
-#         "title": raw.get("title", ""),
-#         "content": (raw.get("content") or raw.get("desc") or "")[:1000],
-#         "author": ...,
-#         "likes": ...,
-#         # 只保留消费端需要的字段
-#     }
-#
-# def _clean_items(raw_list: list) -> list:
-#     """批量清洗"""
-#     return [_clean_item(item) for item in raw_list if isinstance(item, dict)]
-
-
-# ══════════════════════════════════════════════════════
-# 后端检测（所有象限通用）
-# ══════════════════════════════════════════════════════
-
-def _check_preferred() -> bool:
-    """检测首选后端"""
-    # A系列: urllib.request / requests 调 API 是否可达
-    # B系列: subprocess.run 检测 CLI 是否存在+可用
-    raise NotImplementedError
-
-
-def _check_fallback() -> bool:
-    """检测备选后端"""
-    raise NotImplementedError
-
-
-def _check_last_resort() -> bool:
-    """检测兜底后端"""
-    raise NotImplementedError
-
-
-_CHECK_FUNCS = {
-    "首选": _check_preferred,
-    "备选": _check_fallback,
-    "兜底": _check_last_resort,
-}
 
 
 def _detect_active_backend() -> str | None:
-    """按序探测，返回第一个可用后端名称"""
+    """按序探测，返回第一个可用的后端"""
     for name in BACKENDS:
         fn = _CHECK_FUNCS.get(name)
         if fn is None:
@@ -106,7 +70,7 @@ def _detect_active_backend() -> str | None:
         try:
             if fn():
                 return name
-        except Exception:
+        except:
             continue
     return None
 
@@ -121,44 +85,64 @@ def doctor() -> dict:
             continue
         try:
             statuses[name] = fn()
-        except Exception:
+        except:
             statuses[name] = False
     return {
         "platform": PLATFORM_DESC,
-        "login_required": CLASS == "B",
-        "data_cleaned": CLEAN,
+        "class": CLASS,
         "backends": statuses,
         "active_backend": _detect_active_backend(),
     }
 
 
 # ══════════════════════════════════════════════════════
-# 业务函数 — 按象限选模式
+# 搜索引擎兜底指引（B 类必加，A 类可删）
+# ══════════════════════════════════════════════════════
+
+def _no_backend_hint() -> str:
+    """所有后端不可用时，指引模型用搜索引擎兜底（原则⑤⑥）"""
+    opencli_ok = _check_opencli()
+    if opencli_ok:
+        cause = f"{PLATFORM_DESC} 登录 Cookie 已过期或被拦截"
+    else:
+        cause = f"OpenCLI 连接异常，{PLATFORM_DESC} 无法读取"
+    return (
+        f"{cause}。\n"
+        f"\n"
+        f"用你自己的搜索工具搜索 site:{SEARCH_DOMAIN} '关键词' 获取内容，\n"
+        f"将结果正常输出给用户，并告知用户该平台登录状态需要更新。\n"
+        f"\n"
+        f"注意：不要尝试自行修复（重试命令、修改参数、换工具等），\n"
+        f"自行修复通常无效且浪费大量时间和上下文资源。\n"
+        f"如果搜索引擎也无法获取有效内容，则跳过此步骤，\n"
+        f"在结尾如实告知用户无法获取该平台的内容。"
+    )
+
+
+# ══════════════════════════════════════════════════════
+# 业务函数
 # ══════════════════════════════════════════════════════
 #
-# A-1（B站型）：直接调 API → 可选 _clean_items
+# Class A 模式：直接调公开 API
 #   def search(query, count=5) -> list:
-#       data = _call_api("/search", {"q": query})
-#       items = data.get("results", [])[:count]
-#       return _clean_items(items) if CLEAN else items
+#       ...
 #
-# A-2（知乎型）：直接调 API → 必须 _clean_items
-# B-1（X/Reddit型）：_detect_active_backend() → 调对应后端 → 可选清洗
-# B-2（小红书型）：_detect_active_backend() → 调对应后端 → 必须清洗
+# Class B 模式：调 OpenCLI → 失败返回 _no_backend_hint()
+#   def search(query, count=5) -> dict:
+#       active = _detect_active_backend()
+#       if active == "opencli":
+#           try: ...
+#           except: ...
+#       return {"error": _no_backend_hint()}
 #
+
 
 def example_search(query: str, count: int = 5) -> list | dict:
-    """示例搜索函数"""
-    raise NotImplementedError
-
-
-def example_read(item_id: str) -> dict:
-    """示例读取函数"""
     raise NotImplementedError
 
 
 # ══════════════════════════════════════════════════════
-# MCP 协议层（全象限通用，不需改动）
+# MCP 协议层（通用，不需改动）
 # ══════════════════════════════════════════════════════
 
 TOOLS = [
@@ -167,17 +151,13 @@ TOOLS = [
         "description": f"检查 {PLATFORM_DESC} 所有后端状态",
         "inputSchema": {"type": "object", "properties": {}},
     },
-    # ── 添加你的 tool 定义 ──
 ]
 
 
 def handle_call(name: str, args: dict) -> dict:
-    """路由 MCP 调用到业务函数"""
     try:
         if name == "doctor":
             result = doctor()
-        # elif name == "search":
-        #     result = example_search(args.get("query",""), args.get("count",5))
         else:
             return {"isError": True, "content": [
                 {"type": "text", "text": f"未知 tool: {name}"}
@@ -192,7 +172,6 @@ def handle_call(name: str, args: dict) -> dict:
 
 
 def main():
-    """MCP stdio JSON-RPC 事件循环"""
     for line in sys.stdin:
         line = line.strip()
         if not line:

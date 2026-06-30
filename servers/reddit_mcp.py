@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """
 reddit-mcp — MCP server for Reddit.
-Multi-backend: opencli > rdt-cli > jina-reader (fallback).
+Single-backend: opencli (EasyAgent 统一登录态).
 
 Usage:
   python /path/to/reddit_mcp.py
 
-Backends (detected at runtime, first wins):
-  1. opencli      (npm install -g @jackwener/opencli + Chrome extension)
-  2. rdt-cli      (pip install rdt-cli, Cookie-based auth)
-  3. jina-reader  (zero-dependency HTTP fallback, read-only only)
+Backend:
+  opencli  (npm install -g @jackwener/opencli + Chrome extension)
 Class: B — 需登录态（Cookie/浏览器）
 """
 
@@ -29,7 +27,7 @@ SEARCH_DOMAIN = "reddit.com"
 CLASS = "B"
 CLEAN = True
 
-BACKENDS = ["opencli", "rdt-cli", "jina-reader"]
+BACKENDS = ["opencli"]
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
@@ -166,38 +164,8 @@ def _check_opencli() -> bool:
         return False
 
 
-def _check_rdt_cli() -> bool:
-    """检测 rdt-cli 是否已安装"""
-    try:
-        r = subprocess.run(
-            ["rdt", "--version"],
-            capture_output=True, text=True, timeout=5,
-        )
-        return r.returncode == 0
-    except FileNotFoundError:
-        return False
-    except Exception:
-        return False
-
-
-def _check_jina_reader() -> bool:
-    """检测 Jina Reader 网络连通性"""
-    try:
-        req = urllib.request.Request(
-            "https://r.jina.ai/https://www.reddit.com",
-            headers={"User-Agent": UA},
-            method="HEAD",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
-
-
 _CHECK_FUNCS = {
     "opencli": _check_opencli,
-    "rdt-cli": _check_rdt_cli,
-    "jina-reader": _check_jina_reader,
 }
 
 
@@ -284,23 +252,6 @@ def reddit_hot(subreddit: str = "", limit: int = 10) -> dict:
         except Exception as e:
             return {"error": f"opencli 热门异常: {str(e)}"}
 
-    elif active == "rdt-cli":
-        try:
-            cmd = ["rdt", "hot"]
-            if limit:
-                cmd.extend(["--limit", str(limit)])
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-            if r.returncode != 0:
-                return {"error": f"rdt-cli 热门失败: {r.stderr.strip() or r.stdout.strip()}"}
-            result = _parse_json_or_raw(r.stdout, "rdt-cli")
-            if isinstance(result, list):
-                result = _clean_posts(result)
-            elif isinstance(result, dict):
-                result = _clean_post(result)
-            return result
-        except Exception as e:
-            return {"error": f"rdt-cli 热门异常: {str(e)}"}
-
     return {"error": f"当前后端 '{active}' 不支持热门功能"}
 
 
@@ -327,28 +278,11 @@ def reddit_search(query: str, limit: int = 10) -> dict:
         except Exception as e:
             return {"error": f"opencli 搜索异常: {str(e)}"}
 
-    elif active == "rdt-cli":
-        try:
-            r = subprocess.run(
-                ["rdt", "search", query, "--limit", str(limit)],
-                capture_output=True, text=True, timeout=15,
-            )
-            if r.returncode != 0:
-                return {"error": f"rdt-cli 搜索失败: {r.stderr.strip() or r.stdout.strip()}"}
-            result = _parse_json_or_raw(r.stdout, "rdt-cli")
-            if isinstance(result, list):
-                result = _clean_posts(result)
-            elif isinstance(result, dict):
-                result = _clean_post(result)
-            return result
-        except Exception as e:
-            return {"error": f"rdt-cli 搜索异常: {str(e)}"}
-
     return {"error": f"当前后端 '{active}' 不支持搜索功能"}
 
 
 def reddit_post(url: str) -> dict:
-    """读取 Reddit 帖子内容 + 评论。优先 opencli，兜底 Jina Reader。"""
+    """读取 Reddit 帖子内容 + 评论。"""
     active, err = _ensure_active()
     if err:
         return {"error": err}
@@ -360,32 +294,17 @@ def reddit_post(url: str) -> dict:
                 capture_output=True, text=True, timeout=15,
             )
             if r.returncode != 0:
-                # opencli 失败 → 降级到 Jina Reader
-                return _reddit_post_jina(url)
+                return {"error": f"opencli 读取失败: {r.stderr.strip() or r.stdout.strip()}"}
             result = _parse_json_or_raw(r.stdout, "opencli")
             if isinstance(result, list):
                 result = _clean_posts(result)
             elif isinstance(result, dict):
                 result = _clean_post(result)
             return result
-        except Exception:
-            # 异常降级
-            return _reddit_post_jina(url)
+        except Exception as e:
+            return {"error": f"opencli 读取异常: {str(e)}"}
 
-    # Jina Reader 兜底
-    return _reddit_post_jina(url)
-
-
-def _reddit_post_jina(url: str) -> dict:
-    """通过 Jina Reader 读取 Reddit 帖子（零依赖 HTTP 兜底）"""
-    try:
-        jina_url = f"https://r.jina.ai/{url}"
-        req = urllib.request.Request(jina_url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            text = resp.read().decode("utf-8")
-            return {"result": text, "format": "markdown", "source": "jina-reader", "_backend": "jina-reader"}
-    except Exception as e:
-        return {"error": f"jina-reader 读取失败: {str(e)}"}
+    return {"error": _no_backend_hint()}
 
 
 def reddit_subreddit(name: str, limit: int = 10) -> dict:
@@ -422,7 +341,7 @@ TOOLS = [
     },
     {
         "name": "reddit_post",
-        "description": "读取 Reddit 帖子内容及评论。优先 opencli，兜底 Jina Reader（零依赖 HTTP 抓取）。",
+        "description": "读取 Reddit 帖子内容及评论。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -448,7 +367,7 @@ TOOLS = [
     },
     {
         "name": "doctor",
-        "description": "检查 Reddit 所有后端（opencli / rdt-cli / jina-reader）的可用状态",
+        "description": "检查 Reddit 后端（opencli）的可用状态",
         "inputSchema": {"type": "object", "properties": {}},
     },
 ]

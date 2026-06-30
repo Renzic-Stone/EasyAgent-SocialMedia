@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-xiaohongshu-mcp — MCP server for 小红书 (Xiaohongshu / RED).
+opencli-mcp — MCP server for 小红书 (Xiaohongshu / RED).
 Zero external dependencies (stdlib only).
 
-三后端路由（按优先级）：
+双后端（按优先级）：
   1. opencli     (npm @jackwener/opencli + Chrome 扩展)  — 桌面环境首选
-  2. xiaohongshu-mcp  (xpzouying/xiaohongshu-mcp, HTTP) — 服务器环境备选
-  3. xhs-cli     (pip xiaohongshu-cli)                  — 旧版CLI兜底
+  后端仅 opencli，失败时模型用搜索引擎兜底
 
 Usage:
   python /path/to/xiaohongshu_mcp.py
@@ -19,7 +18,6 @@ import sys
 
 # Windows npm 全局命令需要 .cmd 后缀
 OPENCLI_CMD = "opencli.cmd" if sys.platform == "win32" else "opencli"
-import urllib.request
 import re
 
 # ── Platform info ──
@@ -31,7 +29,7 @@ SEARCH_DOMAIN = "xiaohongshu.com"
 CLASS = "B"
 CLEAN = True
 
-BACKENDS = ["opencli", "xiaohongshu-mcp", "xhs-cli"]
+BACKENDS = ["opencli"]
 
 # ── Utility functions ──
 
@@ -45,7 +43,7 @@ def _no_backend_hint() -> str:
         cause = f"{PLATFORM_DESC} 登录 Cookie 已过期或被拦截"
     else:
         cause = f"OpenCLI 连接异常，{PLATFORM_DESC} 无法读取"
-    return f"{cause}。\n\n先用搜索引擎搜索 site:{SEARCH_DOMAIN} '关键词' 获取内容，\n将结果正常输出给用户，并告知用户该平台登录状态需要更新。\n\n注意：不要尝试自行修复（重试命令、修改参数、换工具等），\n自行修复通常无效且浪费大量时间和上下文资源。\n如果搜索引擎也无法获取有效内容，则跳过此步骤，\n在结尾如实告知用户无法获取该平台的内容。"
+    return f"{cause}。\n\n用你自己的搜索工具搜索 site:{SEARCH_DOMAIN} '关键词' 获取内容，\n将结果正常输出给用户，并告知用户该平台登录状态需要更新。\n\n注意：不要尝试自行修复（重试命令、修改参数、换工具等），\n自行修复通常无效且浪费大量时间和上下文资源。\n如果搜索引擎也无法获取有效内容，则跳过此步骤，\n在结尾如实告知用户无法获取该平台的内容。"
 
 
 def _extract_note_id(url_or_id: str) -> str:
@@ -361,42 +359,8 @@ def _check_opencli() -> bool:
         return False
 
 
-def _check_xiaohongshu_mcp() -> bool:
-    """检测 xiaohongshu-mcp 服务 (xpzouying/xiaohongshu-mcp) 是否在运行"""
-    try:
-        req = urllib.request.Request(
-            "http://localhost:18060/mcp",
-            method="GET",
-        )
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            # 只要连接有响应就算可用
-            return resp.status == 200
-    except Exception:
-        return False
-
-
-def _check_xhs_cli() -> bool:
-    """检测 xhs-cli (pip xiaohongshu-cli) 是否可用"""
-    try:
-        r = subprocess.run(
-            ["xhs", "status"],
-            capture_output=True, text=True, timeout=10,
-        )
-        return r.returncode == 0
-    except FileNotFoundError:
-        return False
-    except (subprocess.TimeoutExpired, Exception):
-        return False
-
-
-# ═══════════════════════════════════════════════════════
-# 后端路由
-# ═══════════════════════════════════════════════════════
-
 _CHECK_FUNCS = {
     "opencli": _check_opencli,
-    "xiaohongshu-mcp": _check_xiaohongshu_mcp,
-    "xhs-cli": _check_xhs_cli,
 }
 
 
@@ -523,260 +487,6 @@ def _opencli_comments(note_id: str) -> list:
 
 
 # ═══════════════════════════════════════════════════════
-# 业务函数 — xiaohongshu-mcp 后端（HTTP JSON-RPC）
-# ═══════════════════════════════════════════════════════
-
-_MCP_SERVER_URL = "http://localhost:18060/mcp"
-
-
-def _mcp_http_call(tool_name: str, args: dict) -> dict | None:
-    """通过 HTTP JSON-RPC 调用 xiaohongshu-mcp 的 tool"""
-    # 先发 initialize
-    init_payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "xiaohongshu-mcp-client", "version": "0.1.0"},
-        },
-    }
-    try:
-        req_data = json.dumps(init_payload).encode("utf-8")
-        req = urllib.request.Request(
-            _MCP_SERVER_URL,
-            data=req_data,
-            headers={"Content-Type": "application/json", "User-Agent": UA},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            init_resp = json.loads(resp.read().decode("utf-8"))
-            if init_resp.get("error"):
-                raise RuntimeError(f"initialize 失败: {init_resp['error']}")
-    except Exception as e:
-        raise RuntimeError(f"xiaohongshu-mcp 连接失败: {e}")
-
-    # 发 tools/call
-    call_payload = {
-        "jsonrpc": "2.0",
-        "id": 2,
-        "method": "tools/call",
-        "params": {
-            "name": tool_name,
-            "arguments": args,
-        },
-    }
-    try:
-        req_data = json.dumps(call_payload).encode("utf-8")
-        req = urllib.request.Request(
-            _MCP_SERVER_URL,
-            data=req_data,
-            headers={"Content-Type": "application/json", "User-Agent": UA},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            resp_data = json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        raise RuntimeError(f"xiaohongshu-mcp tools/call 失败: {e}")
-
-    if resp_data.get("error"):
-        raise RuntimeError(f"xiaohongshu-mcp 返回错误: {resp_data['error']}")
-
-    result = resp_data.get("result", {})
-    # MCP tool result 中的 content 是 list of content items
-    content = result.get("content", [])
-    # 提取文本内容
-    texts = []
-    for item in content:
-        if isinstance(item, dict) and item.get("type") == "text":
-            texts.append(item.get("text", ""))
-    full_text = "\n".join(texts)
-    if full_text:
-        try:
-            return json.loads(full_text)
-        except json.JSONDecodeError:
-            return {"raw_text": full_text}
-    return result
-
-
-def _xiaohongshu_mcp_search(query: str, count: int = 5) -> list:
-    """通过 xiaohongshu-mcp 后端搜索"""
-    # xpzouying/xiaohongshu-mcp 的工具名可能是 search_xhs_note
-    result = _mcp_http_call("search_xhs_note", {"query": query, "count": count})
-    if result is None:
-        return []
-    if isinstance(result, list):
-        data = result
-    elif isinstance(result, dict):
-        # 尝试抽取列表
-        for k in ("results", "data", "items", "notes", "list"):
-            if isinstance(result.get(k), list):
-                data = result[k]
-                break
-        else:
-            data = [result]
-    else:
-        return []
-    return [_clean_note(item) for item in data if isinstance(item, dict)]
-
-
-def _xiaohongshu_mcp_note(note_id: str) -> dict:
-    """通过 xiaohongshu-mcp 后端读笔记详情"""
-    # 工具名可能是 get_xhs_note_detail 或 xiaohongshu_note
-    for tool in ("get_xhs_note_detail", "xiaohongshu_note", "get_note_detail"):
-        try:
-            result = _mcp_http_call(tool, {"url": note_id, "id": note_id})
-            if result:
-                if isinstance(result, dict):
-                    # try to extract inner data
-                    for k in ("data", "note", "result"):
-                        if isinstance(result.get(k), dict):
-                            return _clean_note(result[k])
-                    return _clean_note(result)
-                elif isinstance(result, list) and result:
-                    return _clean_note(result[0])
-        except Exception:
-            continue
-    raise RuntimeError("xiaohongshu-mcp 后端无法获取笔记详情")
-
-
-def _xiaohongshu_mcp_comments(note_id: str) -> list:
-    """通过 xiaohongshu-mcp 后端读评论"""
-    for tool in ("get_xhs_note_comments", "xiaohongshu_comments", "get_note_comments"):
-        try:
-            result = _mcp_http_call(tool, {"id": note_id, "note_id": note_id})
-            if result:
-                data = result
-                if isinstance(data, dict):
-                    for k in ("comments", "data", "items", "list"):
-                        if isinstance(data.get(k), list):
-                            data = data[k]
-                            break
-                if isinstance(data, list):
-                    return [_clean_comment(c) for c in data if isinstance(c, dict)]
-                return []
-        except Exception:
-            continue
-    raise RuntimeError("xiaohongshu-mcp 后端无法获取评论")
-
-
-# ═══════════════════════════════════════════════════════
-# 业务函数 — xhs-cli 后端（pip xiaohongshu-cli）
-# ═══════════════════════════════════════════════════════
-
-def _xhs_cli_search(query: str, count: int = 5) -> list:
-    """通过 xhs-cli 搜索"""
-    r = subprocess.run(
-        ["xhs", "search", query, "-n", str(count)],
-        capture_output=True, text=True, timeout=15,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"xhs search 失败: {r.stderr.strip() or 'unknown error'}")
-    if not r.stdout.strip():
-        return []
-
-    data = json.loads(r.stdout)
-    if isinstance(data, dict):
-        for k in ("results", "data", "items", "notes", "list"):
-            if isinstance(data.get(k), list):
-                data = data[k]
-                break
-        else:
-            data = [data]
-    elif not isinstance(data, list):
-        return []
-
-    return [_clean_note(item) for item in data if isinstance(item, dict)]
-
-
-def _xhs_cli_note(note_id: str) -> dict:
-    """通过 xhs-cli 读取笔记详情"""
-    r = subprocess.run(
-        ["xhs", "note", note_id],
-        capture_output=True, text=True, timeout=15,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"xhs note 失败: {r.stderr.strip() or 'unknown error'}")
-    if not r.stdout.strip():
-        return {"error": "empty response"}
-
-    data = json.loads(r.stdout)
-    if isinstance(data, list):
-        data = data[0] if data else {}
-    if not isinstance(data, dict):
-        return {"error": f"unexpected data type: {type(data).__name__}"}
-
-    return _clean_note(data)
-
-
-def _xhs_cli_comments(note_id: str) -> list:
-    """通过 xhs-cli 读取评论"""
-    r = subprocess.run(
-        ["xhs", "comments", note_id],
-        capture_output=True, text=True, timeout=15,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"xhs comments 失败: {r.stderr.strip() or 'unknown error'}")
-    if not r.stdout.strip():
-        return []
-
-    data = json.loads(r.stdout)
-    if isinstance(data, dict):
-        for k in ("comments", "data", "items", "list"):
-            if isinstance(data.get(k), list):
-                data = data[k]
-                break
-        else:
-            data = [data]
-    elif not isinstance(data, list):
-        return []
-
-    return [_clean_comment(c) for c in data if isinstance(c, dict)]
-
-
-# ═══════════════════════════════════════════════════════
-# 统一业务接口（路由 + 自动降级）
-# ═══════════════════════════════════════════════════════
-
-_BACKEND_HANDLERS = {
-    "opencli": {
-        "search": _opencli_search,
-        "note": _opencli_note,
-        "comments": _opencli_comments,
-    },
-    "xiaohongshu-mcp": {
-        "search": _xiaohongshu_mcp_search,
-        "note": _xiaohongshu_mcp_note,
-        "comments": _xiaohongshu_mcp_comments,
-    },
-    "xhs-cli": {
-        "search": _xhs_cli_search,
-        "note": _xhs_cli_note,
-        "comments": _xhs_cli_comments,
-    },
-}
-
-
-def _call_backend(action: str, *args, **kwargs):
-    """自动选择可用后端并执行操作，优雅降级"""
-    active = _detect_active_backend()
-    if active is None:
-        return {"error": _no_backend_hint()}
-
-    handlers = _BACKEND_HANDLERS.get(active, {})
-    fn = handlers.get(action)
-    if fn is None:
-        return {"error": f"后端 {active} 不支持操作: {action}"}
-
-    try:
-        return fn(*args, **kwargs)
-    except Exception as e:
-        error_msg = str(e)
-        return {"error": f"后端 {active} 执行 {action} 失败: {error_msg}"}
-
-
-# ═══════════════════════════════════════════════════════
 # MCP Tools 定义
 # ═══════════════════════════════════════════════════════
 
@@ -830,7 +540,7 @@ TOOLS = [
     },
     {
         "name": "doctor",
-        "description": "检查小红书所有后端状态（opencli / xiaohongshu-mcp / xhs-cli）",
+        "description": "检查小红书所有后端状态（opencli ）",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -854,14 +564,23 @@ def handle_call(name: str, args: dict) -> dict:
                 count = 5
             if count > 50:
                 count = 50
-            result = _call_backend("search", args.get("query", ""), count=count)
+            try:
+                result = _opencli_search(args.get("query", ""), count=count)
+            except Exception:
+                result = {"error": _no_backend_hint()}
         elif name == "xiaohongshu_note":
             url_or_id = args.get("url_or_id", "")
             note_id = _extract_note_id(url_or_id)
-            result = _call_backend("note", note_id)
+            try:
+                result = _opencli_note(note_id)
+            except Exception:
+                result = {"error": _no_backend_hint()}
         elif name == "xiaohongshu_comments":
             note_id = args.get("note_id", "")
-            result = _call_backend("comments", note_id)
+            try:
+                result = _opencli_comments(note_id)
+            except Exception:
+                result = {"error": _no_backend_hint()}
         else:
             return {
                 "isError": True,
