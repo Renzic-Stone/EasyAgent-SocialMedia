@@ -33,7 +33,7 @@
 > **结果好得超出预期：**
 > - MCP 是独立进程，不占 context，不耗 token
 > - 每个 server 自包含，要哪个配哪个
-> - 内部有多后端自动降级（首选→备选→兜底）
+> - 统一 OpenCLI 后端 + 搜索引擎兜底，废弃独立 CLI
 > - 一个崩了不影响其他
 >
 > 用着用着，Reddit 也加进来了。代码慢慢规范化，形成了"四象限分类"的模板体系。
@@ -42,15 +42,15 @@
 
 ## 架构
 
-```
+```bash
 Hermes Agent / Claude Code / Codex / Cursor …
         │
    MCP 网关（进程隔离，按需启动）
         │
-   ├── bilibili-mcp   →  [A-1] 公开API → bili-cli → OpenCLI
-   ├── x-mcp          →  [B-1] twitter-cli → OpenCLI → Jina Reader
-   ├── xiaohongshu-mcp → [B-2] OpenCLI → xhs-mcp → xhs-cli
-   └── reddit-mcp     →  [B-1] OpenCLI → rdt-cli → Jina Reader
+   ├── bilibili-mcp   →  [A] 公开API → 自动降级 OpenCLI → 搜索引擎兜底
+   ├── x-mcp          →  [B] OpenCLI → [Cookie失效] 搜索引擎兜底
+   ├── xiaohongshu-mcp → [B] OpenCLI → [Cookie失效] 搜索引擎兜底
+   └── reddit-mcp     →  [B] OpenCLI → [Cookie失效] 搜索引擎兜底
 ```
 
 每个 MCP server 内部的 backend 检测和降级逻辑自包含，互不依赖。
@@ -68,12 +68,12 @@ Hermes Agent / Claude Code / Codex / Cursor …
 
 ## 成品一览
 
-| MCP | 象限 | 文件 | 后端路由 |
-|-----|------|------|---------|
-| bilibili-mcp | A-1 | `servers/bilibili_mcp.py` | 公开API → bili-cli → OpenCLI |
-| x-mcp | B-1 | `servers/x_mcp.py` | twitter-cli → OpenCLI → Jina Reader |
-| xiaohongshu-mcp | B-2 | `servers/xiaohongshu_mcp.py` | OpenCLI → xhs-mcp → xhs-cli |
-| reddit-mcp | B-1 | `servers/reddit_mcp.py` | OpenCLI → rdt-cli → Jina Reader |
+| MCP | 类 | 文件 | 链路 |
+|-----|-----|------|------|
+| bilibili-mcp | A | `servers/bilibili_mcp.py` | 公开API → 自动降级 OpenCLI → 搜索引擎兜底 |
+| x-mcp | B | `servers/x_mcp.py` | OpenCLI → [Cookie失效] 搜索引擎兜底 |
+| xiaohongshu-mcp | B-2 | `servers/xiaohongshu_mcp.py` | OpenCLI → [Cookie失效] 搜索引擎兜底 |
+| reddit-mcp | B | `servers/reddit_mcp.py` | OpenCLI → [Cookie失效] 搜索引擎兜底 |
 
 每个 MCP server 提供 4-5 个 tool（搜索、详情、评论、状态诊断），均源自同一套模板。
 
@@ -156,23 +156,12 @@ hermes mcp add xiaohongshu-mcp --command python --args /path/to/servers/xiaohong
 hermes mcp add reddit-mcp --command python --args /path/to/servers/reddit_mcp.py
 ```
 
-### 独立 CLI 方案（备选）
-
-如果不想用 OpenCLI，可以直接装对应平台的独立 CLI：
-
-```bash
-pip install twitter-cli && export TWITTER_AUTH_TOKEN="..."  # X
-pip install xiaohongshu-cli && xhs login                    # 小红书
-pip install rdt-cli && rdt login                            # Reddit
-```
-
 ### 扩展流程（从模板创建新 MCP）
 
 1. 复制模板：`cp template/mcp_template.py servers/new_platform_mcp.py`
-2. 判断所属象限，修改 `CLASS` / `CLEAN`
-3. 删掉不需要的节（A 类删配置管理，1 类删数据清洗）
-4. 实现 `_check_*` 检测函数 + 业务函数
-5. 注册到网关（Agent 会自动执行这一步）
+2. 设置 `CLASS`（A=零配置/B=需登录）、`CLEAN`（True=需清洗）、`BACKENDS`、`SEARCH_DOMAIN`
+3. 实现业务函数（参考模板中的 A/B 模式示例）
+4. 注册到网关（Agent 会自动执行这一步）
 
 MCP 协议层（TOOLS / handle_call / main）所有平台通用，**复制即用，不需要改**。
 
